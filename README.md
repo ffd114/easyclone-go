@@ -117,7 +117,7 @@ Where the original had bugs, this rewrite keeps or fixes them as follows:
 | Q5 | **Fixed** | Downloads stream to `<archive>.part` and rename atomically; an interrupted download can no longer poison the cache. |
 | Q6 | **Fixed** | `tar`/`unzip` failures are fatal (`Failed: tar … \| <stderr>` / `Failed: unzip … \| <stderr>`). |
 | Q7 | Keep | Substring-based archive extension detection, as specified in §6. |
-| Q8 | **Fixed** | `userinfo` credentials are redacted from `Cloning:`/`Fetching:` logs and `Failed: git …` messages. |
+| Q8 | **Fixed** | `userinfo` credentials are redacted from `Cloning:`/`Fetching:`/`Downloading Moodle from:` logs, `Failed: git …` and `Missing: <subdir> \| <url>` errors, and the rule 4 validation message. |
 | Q9 | Keep | Relative paths resolve against cwd (container use). Documented here. |
 | Q10 | **Fixed** | Symlinks are preserved by local copies and zip extraction. |
 | Q11 | Keep | `sshKey` unquoted in `GIT_SSH_COMMAND`, `StrictHostKeyChecking=no` always on (§7.4). |
@@ -144,7 +144,8 @@ Test layout, mapped to the acceptance scenarios in `docs/SPEC.md` §12:
   coercion (§12.7).
 - `internal/fsutil/fsutil_test.go` — `rm` guard (§12.15a), `copyDir` incl.
   symlink preservation, `applyPatches` ordering/failures (§12.13-14).
-- `internal/repo/repo_test.go` — credential redaction in logs (Q8).
+- `internal/logx/logx_test.go` — credential redaction in logs (Q8).
+- `internal/moodle/moodle_test.go` — download progress byte counting.
 - `internal/installer/installer_test.go` — all end-to-end scenarios: Moodle
   download/cache/extract/patch/cleanup (§12.9-15a) and plugin installation
   from local repos over `file://` URLs (§12.16-29).

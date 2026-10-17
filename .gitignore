@@ -1,9 +1,10 @@
-# Local artifacts produced/consumed by easyclone (SPEC §10)
-easyclone
-easyclone-go
-easyclone.yaml
+# Local artifacts produced/consumed by easyclone (SPEC §10). Anchored to the
+# repo root so they don't also match source dirs such as internal/moodle.
+/easyclone
+/easyclone-go
+/easyclone.yaml
 .DS_Store
-moodle
-plugins
-patch
-.cache
+/moodle
+/plugins
+/patch
+/.cache

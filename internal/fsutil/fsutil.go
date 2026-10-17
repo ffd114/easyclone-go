@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/ffd114/easyclone-go/internal/logx"
 )
@@ -53,10 +54,14 @@ func realpath(path string) (string, error) {
 
 // isAncestor reports whether dir is dirOrAncestor itself or an ancestor of it.
 func isAncestor(dirOrAncestor, dir string) bool {
-	if dirOrAncestor == dir {
-		return true
+	rel, err := filepath.Rel(dirOrAncestor, dir)
+	if err != nil {
+		return false
 	}
-	return strings.HasPrefix(dir, dirOrAncestor+string(filepath.Separator))
+	// Rel handles the filesystem root ("/" has no trailing component to
+	// append a separator to) and never yields a ".."-prefixed path for a
+	// descendant.
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // CopyDir implements SPEC §8.2: log, mkdir -p, then recurse.
@@ -125,7 +130,12 @@ func copyFile(src, dest string) error {
 		out.Close()
 		return err
 	}
-	return out.Close()
+	if err := out.Close(); err != nil {
+		return err
+	}
+	// OpenFile's mode is filtered by the umask; set it explicitly so the
+	// permissions match the source exactly, like the OS copy (SPEC §8.2).
+	return os.Chmod(dest, info.Mode().Perm())
 }
 
 // ApplyPatches implements SPEC §8.3. A missing or unreadable patchDir, or
@@ -150,9 +160,9 @@ func ApplyPatches(patchDir, targetDir string) error {
 	if len(names) == 0 {
 		return nil
 	}
-	// Sorted lexicographically; use the 0001-…, 0002-… convention to control
-	// order (SPEC §8.3 step 4).
-	sort.Strings(names)
+	// Sorted lexicographically by UTF-16 code units; use the 0001-…, 0002-…
+	// convention to control order (SPEC §8.3 step 4).
+	sort.Slice(names, func(i, j int) bool { return lessUTF16(names[i], names[j]) })
 
 	noun := "patches"
 	if len(names) == 1 {
@@ -178,8 +188,31 @@ func ApplyPatches(patchDir, targetDir string) error {
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("Failed: patch %s | %s", name, strings.TrimSpace(stderr.String()))
+			return fmt.Errorf("Failed: patch %s | %s", name, ErrDetail(err, stderr.String()))
 		}
 	}
 	return nil
+}
+
+// ErrDetail is the text after `|` in a subprocess failure: its stderr, or
+// the run error itself when stderr is empty (e.g. the binary is not
+// installed), so the cause is never lost.
+func ErrDetail(err error, stderr string) string {
+	if s := strings.TrimSpace(stderr); s != "" {
+		return s
+	}
+	return err.Error()
+}
+
+// lessUTF16 compares strings by UTF-16 code units, matching the original
+// JavaScript sort (SPEC §8.3). It differs from a byte-wise compare only for
+// characters outside the Basic Multilingual Plane.
+func lessUTF16(a, b string) bool {
+	ua, ub := utf16.Encode([]rune(a)), utf16.Encode([]rune(b))
+	for i := 0; i < len(ua) && i < len(ub); i++ {
+		if ua[i] != ub[i] {
+			return ua[i] < ub[i]
+		}
+	}
+	return len(ua) < len(ub)
 }

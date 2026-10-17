@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/ffd114/easyclone-go/internal/logx"
 )
 
 // MoodleConfig is the `moodle` block of the manifest (SPEC §5.5).
@@ -158,10 +160,17 @@ func parseConfig(root map[string]any) (*Config, error) {
 		} else if present {
 			patch = b
 		}
+		// patchDir defaults to "patch" when absent, but an explicit empty
+		// string fails `required` (SPEC §5.5).
 		patchDir := "patch"
-		if s, present, err := stringField(m, "patchDir"); err != nil {
-			return nil, err
-		} else if present {
+		if v, present := m["patchDir"]; present && v != nil {
+			s, ok := asString(v)
+			if !ok {
+				return nil, errors.New("patchDir must be a string")
+			}
+			if s == "" {
+				return nil, errors.New("moodle.patchDir is a required field")
+			}
 			patchDir = s
 		}
 		cleanup := defaultMoodleCleanup
@@ -302,7 +311,7 @@ func parseRepo(item any) (RepoConfig, error) {
 		// Note: the message says "not both" even when neither is set (SPEC Q13).
 		source := repo.Path
 		if hasURL {
-			source = repo.URL
+			source = logx.Redact(repo.URL)
 		}
 		return repo, fmt.Errorf("Either target or subdirs must be provided, not both. Source: (%s)", source)
 	}
@@ -384,13 +393,11 @@ func stringField(m map[string]any, key string) (string, bool, error) {
 }
 
 // boolField reads a scalar field and coerces it to a bool (SPEC §5.3).
-// A missing key, a null value or an empty string counts as "missing".
+// A missing key or a null value counts as "missing"; anything that does not
+// coerce (including an empty string) is a type error, as in yup.
 func boolField(m map[string]any, key string) (bool, bool, error) {
 	v, present := m[key]
 	if !present || v == nil {
-		return false, false, nil
-	}
-	if s, isStr := v.(string); isStr && s == "" {
 		return false, false, nil
 	}
 	b, ok := asBool(v)
@@ -442,17 +449,18 @@ func asString(v any) (string, bool) {
 	return "", false
 }
 
-// asBool coerces strings like "true"/"false" (and other boolean-like values)
-// and 1/0 numbers to booleans (SPEC §5.3).
+// asBool coerces values the way yup's non-strict boolean cast does
+// (SPEC §5.3): only "true"/"1" and "false"/"0" (case-insensitive) and the
+// numbers 1/0.
 func asBool(v any) (bool, bool) {
 	switch t := v.(type) {
 	case bool:
 		return t, true
 	case string:
 		switch strings.ToLower(t) {
-		case "true", "1", "yes", "y", "on":
+		case "true", "1":
 			return true, true
-		case "false", "0", "no", "n", "off":
+		case "false", "0":
 			return false, true
 		}
 	case int:

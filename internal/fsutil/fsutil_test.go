@@ -184,3 +184,61 @@ func TestApplyPatches(t *testing.T) {
 		}
 	})
 }
+
+func TestIsAncestor(t *testing.T) {
+	tests := []struct {
+		dir, cwd string
+		want     bool
+	}{
+		{"/a/b", "/a/b", true},
+		{"/a", "/a/b", true},
+		{"/", "/a/b", true}, // the filesystem root guards everything
+		{"/a/b", "/a", false},
+		{"/a", "/ab", false},
+		{"/a/..b", "/a/..b/c", true},
+	}
+	for _, tt := range tests {
+		if got := isAncestor(tt.dir, tt.cwd); got != tt.want {
+			t.Errorf("isAncestor(%q, %q) = %v, want %v", tt.dir, tt.cwd, got, tt.want)
+		}
+	}
+}
+
+func TestLessUTF16(t *testing.T) {
+	// U+FF5E sorts after U+1F600 in UTF-16 (surrogate 0xD83D < 0xFF5E) but
+	// before it byte-wise in UTF-8.
+	if !lessUTF16("\U0001F600.patch", "\uFF5E.patch") {
+		t.Fatal("astral char must sort before U+FF5E by UTF-16 code units")
+	}
+	if !lessUTF16("0001-a.patch", "0002-b.patch") || lessUTF16("b", "a") || !lessUTF16("a", "ab") {
+		t.Fatal("ASCII ordering broken")
+	}
+}
+
+func TestErrDetail(t *testing.T) {
+	_, err := exec.Command("easyclone-no-such-binary").Output()
+	if got := ErrDetail(err, ""); !strings.Contains(got, "easyclone-no-such-binary") {
+		t.Fatalf("empty stderr must fall back to the run error, got %q", got)
+	}
+	if got := ErrDetail(err, " boom \n"); got != "boom" {
+		t.Fatalf("stderr must win, got %q", got)
+	}
+}
+
+func TestCopyFileKeepsExactMode(t *testing.T) {
+	chdirTemp(t)
+	write(t, "src/f", "x")
+	if err := os.Chmod("src/f", 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := CopyDir("src", "dst"); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat("dst/f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o777 {
+		t.Fatalf("mode = %o, want 777 regardless of umask", st.Mode().Perm())
+	}
+}

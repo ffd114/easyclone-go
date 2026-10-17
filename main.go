@@ -19,6 +19,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/ffd114/easyclone-go/internal/installer"
 )
@@ -39,6 +40,7 @@ func main() {
 // positional arguments are silently ignored. The last occurrence of the
 // config flag wins.
 func resolveConfigPath(args []string) string {
+	path := defaultConfigPath
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
@@ -50,14 +52,15 @@ func resolveConfigPath(args []string) string {
 			os.Exit(0)
 		case arg == "-c" || arg == "--config":
 			if i+1 < len(args) {
-				return args[i+1]
+				i++
+				path = args[i]
 			}
-			return defaultConfigPath
-		case len(arg) > len("--config=") && arg[:9] == "--config=":
-			return arg[9:]
+		case strings.HasPrefix(arg, "--config="):
+			// An empty value is kept, so loading fails with the OS error.
+			path = strings.TrimPrefix(arg, "--config=")
 		}
 	}
-	return defaultConfigPath
+	return path
 }
 
 func printUsage() {

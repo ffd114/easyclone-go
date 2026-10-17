@@ -1,4 +1,4 @@
-package repo
+package logx
 
 import "testing"
 
@@ -11,8 +11,8 @@ func TestRedact(t *testing.T) {
 		"clone https://u:p@host/x.git dest":          "clone https://host/x.git dest",
 	}
 	for input, want := range tests {
-		if got := redact(input); got != want {
-			t.Errorf("redact(%q) = %q, want %q", input, got, want)
+		if got := Redact(input); got != want {
+			t.Errorf("Redact(%q) = %q, want %q", input, got, want)
 		}
 	}
 }

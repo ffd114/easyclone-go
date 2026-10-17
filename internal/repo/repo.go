@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/ffd114/easyclone-go/internal/config"
@@ -137,7 +136,7 @@ func installFromGitSubdirs(cfg *config.Config, r *config.RepoConfig, installs []
 	for _, in := range installs {
 		source := filepath.Join(staging, in.subdir)
 		if st, err := os.Stat(source); err != nil || !st.IsDir() {
-			return fmt.Errorf("Missing: %s | %s", in.subdir, r.URL)
+			return fmt.Errorf("Missing: %s | %s", in.subdir, logx.Redact(r.URL))
 		}
 		logx.Logf("Moving: %s | output %s", source, in.target)
 		if err := os.MkdirAll(filepath.Dir(in.target), 0o755); err != nil {
@@ -200,8 +199,8 @@ func runGit(cfg *config.Config, dir string, args ...string) error {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("Failed: git %s | %s",
-			redact(strings.Join(args, " ")),
-			strings.TrimSpace(stderr.String()))
+			logx.Redact(strings.Join(args, " ")),
+			logx.Redact(fsutil.ErrDetail(err, stderr.String())))
 	}
 	return nil
 }
@@ -213,11 +212,11 @@ func cloneBranch(cfg *config.Config, url, dest, branch string) error {
 		return err
 	}
 	if branch != "" {
-		logx.Logf("Cloning: %s branch %s | output %s", redact(url), branch, dest)
+		logx.Logf("Cloning: %s branch %s | output %s", logx.Redact(url), branch, dest)
 		return runGit(cfg, dir, "clone", "--depth=1", "--single-branch", "--branch", branch, url, dest)
 	}
 	// Note the double space when no branch is given (SPEC §9.1).
-	logx.Logf("Cloning: %s  | output %s", redact(url), dest)
+	logx.Logf("Cloning: %s  | output %s", logx.Redact(url), dest)
 	return runGit(cfg, dir, "clone", "--depth=1", "--single-branch", url, dest)
 }
 
@@ -225,7 +224,7 @@ func cloneBranch(cfg *config.Config, url, dest, branch string) error {
 // fetch exactly one commit. The server must allow fetching by SHA, and in
 // practice a full SHA is required.
 func checkoutHash(cfg *config.Config, url, dest, hash string) error {
-	logx.Logf("Fetching: %s hash %s | output %s", redact(url), hash, dest)
+	logx.Logf("Fetching: %s hash %s | output %s", logx.Redact(url), hash, dest)
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return err
 	}
@@ -241,15 +240,4 @@ func checkoutHash(cfg *config.Config, url, dest, hash string) error {
 		}
 	}
 	return nil
-}
-
-// credRe matches a userinfo component in a URL (e.g. user:token@) so that
-// credentials are not printed in logs or errors (SPEC Q8 fix). It matches
-// anywhere in the string, since URLs are often embedded in log lines and
-// joined git argument lists.
-var credRe = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+@`)
-
-// redact strips userinfo from any URL in the given string.
-func redact(s string) string {
-	return credRe.ReplaceAllString(s, "$1")
 }

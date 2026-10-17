@@ -175,6 +175,28 @@ func TestParseConfigBasics(t *testing.T) {
 			t.Fatalf("unexpected parse: %+v", config.Repositories)
 		}
 	})
+	t.Run("only yup boolean values coerce", func(t *testing.T) {
+		config := mustParse(t, "skip: \"1\"\nrepositories:\n  - url: o/r\n    target: t\n    enable: \"FALSE\"\n")
+		if !config.Skip || config.Repositories[0].Enable {
+			t.Fatal("\"1\" and \"FALSE\" must coerce")
+		}
+		for _, v := range []string{"yes", "on", "n", "\"\""} {
+			if got := mustParseErr(t, "skip: "+v+"\nrepositories: []\n"); got != "skip must be a boolean" {
+				t.Errorf("skip: %s: got %q", v, got)
+			}
+		}
+	})
+	t.Run("empty patchDir is an error", func(t *testing.T) {
+		if got := mustParseErr(t, "moodle: {url: u, path: m, patchDir: \"\"}\nrepositories: []\n"); got != "moodle.patchDir is a required field" {
+			t.Fatalf("got %q", got)
+		}
+	})
+	t.Run("rule 4 source is redacted", func(t *testing.T) {
+		got := mustParseErr(t, "repositories:\n  - url: https://u:secret@example.com/r.git\n")
+		if strings.Contains(got, "secret") {
+			t.Fatalf("credentials leaked: %q", got)
+		}
+	})
 	t.Run("boolean-like strings coerced", func(t *testing.T) {
 		config := mustParse(t, "skip: \"true\"\nrepositories:\n  - url: o/r\n    target: t\n    enable: \"false\"\n")
 		if !config.Skip {
