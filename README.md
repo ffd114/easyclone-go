@@ -2,7 +2,9 @@
 
 A Go rewrite of [easyclone](https://github.com/ffd114/easyclone) v0.1.1
 (Deno implementation, commit `5cc802e`), built from the behavioral
-specification in [`docs/SPEC.md`](docs/SPEC.md).
+specification in [`docs/SPEC.md`](docs/SPEC.md). Where it differs from the
+original (atomic downloads, fatal extraction errors, credential redaction,
+symlink preservation, `--help`/`--version`), see SPEC §11.
 
 easyclone builds a Moodle installation from a YAML manifest, in one go:
 
@@ -103,30 +105,6 @@ See [`docs/SPEC.md`](docs/SPEC.md) §5 for the full schema, and
 | `internal/repo` | Repository processing: install modes, skip/enable logic, git operations (SPEC §7). |
 | `internal/fsutil` | Filesystem primitives: guarded remove, directory copy, patch application (SPEC §8). |
 | `internal/logx` | Progress logging to stdout (SPEC §9). |
-
-## Quirk decisions (SPEC §11)
-
-Where the original had bugs, this rewrite keeps or fixes them as follows:
-
-| # | Decision | Rationale |
-|---|---|---|
-| Q1 | Keep the fix | `moodle.path` is required; `rm` refuses cwd/ancestors (§8.1). |
-| Q2 | Keep the fix | Per-repo `skip` overrides root `skip`, both ways (§7.2). |
-| Q3 | Keep (silent) | `enable: false` stays silent, matching the original and §7.2. |
-| Q4 | Keep | Env substitution still runs before YAML parsing; `${UNSET}` in a comment throws. Documented here. |
-| Q5 | **Fixed** | Downloads stream to `<archive>.part` and rename atomically; an interrupted download can no longer poison the cache. |
-| Q6 | **Fixed** | `tar`/`unzip` failures are fatal (`Failed: tar … \| <stderr>` / `Failed: unzip … \| <stderr>`). |
-| Q7 | Keep | Substring-based archive extension detection, as specified in §6. |
-| Q8 | **Fixed** | `userinfo` credentials are redacted from `Cloning:`/`Fetching:`/`Downloading Moodle from:` logs, `Failed: git …` and `Missing: <subdir> \| <url>` errors, and the rule 4 validation message. |
-| Q9 | Keep | Relative paths resolve against cwd (container use). Documented here. |
-| Q10 | **Fixed** | Symlinks are preserved by local copies and zip extraction. |
-| Q11 | Keep | `sshKey` unquoted in `GIT_SSH_COMMAND`, `StrictHostKeyChecking=no` always on (§7.4). |
-| Q12 | Keep | Unknown config keys are silently accepted. |
-| Q13 | Keep | Rule 4's message says "not both" even when neither is set (§5.6). |
-| Q14 | Keep | `Missing: <target>/patch` check happens after the clone (§7.5). |
-| Q15 | Keep | YAML errors print exactly `Invalid YAML`. |
-| Q16 | Partially fixed | `-h/--help` and `--version` added; other unknown flags are still silently ignored so extra arguments don't break scripts. |
-| Q17 | Keep | `branch` accepts branches and tags, as intended (§7.4). |
 
 ## Development
 

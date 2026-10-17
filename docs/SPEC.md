@@ -1,6 +1,6 @@
 # easyclone — Behavioral Specification
 
-Language-neutral specification of easyclone v0.1.1 (Deno implementation, commit `5cc802e`), written to support a rewrite in another language. It describes **what the current code actually does**, including quirks. Section 11 lists the quirks and bugs so you can decide, one by one, whether the rewrite keeps or fixes them.
+Language-neutral specification of easyclone-go. It is derived from easyclone v0.1.1 (Deno implementation, commit `5cc802e`) and describes **the behavior the Go rewrite implements**. Where the rewrite deliberately departs from the original, or deliberately keeps an original quirk, §11 records the decision. Those decisions are normative and are already reflected in §3–§10.
 
 Conventions: `cwd` = the process working directory at startup. "Throw" = abort the whole run with that message (see §9). Log lines are shown verbatim, with `<placeholders>`.
 
@@ -40,8 +40,10 @@ easyclone [-c <path> | --config <path> | --config=<path>]
 ```
 
 - `-c`, `--config`: path to the config file. Default `easyclone.yaml`, resolved relative to `cwd`.
-- Unknown flags and positional arguments are **silently ignored**.
-- There is no `--help` and no `--version`. The version `0.1.1` exists only in `deno.json`.
+- `-h`, `--help`: print usage to stdout and exit `0` without running.
+- `--version`: print `easyclone <version>` (currently `0.1.1`) to stdout and exit `0` without running.
+- Flags are processed left to right. `--help`/`--version` act as soon as they are reached. If the config flag appears more than once, the last one wins. `-c`/`--config` as the last argument (no value) is ignored.
+- Other unknown flags and positional arguments are **silently ignored**, so extra arguments don't break existing scripts.
 - Exit code `0` on success, `1` on any error (§9). Nothing is printed on success beyond the progress logs.
 
 ---
@@ -193,14 +195,15 @@ archive = cacheDir/<key><ext>
 
 - **Cache hit** if `archive` exists and is a regular file. Log `Using cached Moodle archive: <archive>`. There is no integrity check, no expiry, and old entries are never cleaned up.
 - **Cache miss:**
-  1. Log `Downloading Moodle from: <url>`.
+  1. Log `Downloading Moodle from: <url>` (credentials redacted, §9).
   2. HTTP GET (follow redirects). If the status is not 2xx, throw `Failed to download Moodle: <statusText>` (no file is created).
-  3. Create `archive` and stream the body into it.
+  3. Create `<archive>.part` and stream the body into it.
   4. Progress bar (TTY only, via the `cli-progress` library):
      - With `Content-Length`: `Downloading [{bar}] {percentage}% | {valueMB}MB / {totalMB}MB`, using `█`/`░` characters.
      - Without it: `Downloading | {valueMB}MB`.
      - MB = bytes / 1024 / 1024, 2 decimals.
-  5. If the stream fails partway, the partial file **stays** in the cache and is treated as valid on later runs (§11 Q5).
+  5. When the body has been fully written and the file closed, **rename** `<archive>.part` → `archive` atomically.
+  6. If the stream, close or rename fails, delete `<archive>.part` and throw the error. An interrupted download therefore never leaves an `archive` in the cache (§11 Q5).
 
 ### 6.2 Extraction
 
@@ -209,9 +212,9 @@ Log `Extracting Moodle to <target>`, then `mkdir -p target`.
 - If the **original (case-sensitive)** url contains `.zip`:
   1. Make a system temp dir. Run `unzip -q <archive> -d <tmp>`.
   2. Take the **first directory entry** found in `<tmp>` (directory listing order, usually the single `moodle/` folder) as the source. If there is none, use `<tmp>` itself.
-  3. Recursively copy the source's *contents* into `target` (§8.2; symlinks are dropped). Then `rm(<tmp>)`.
+  3. Recursively copy the source's *contents* into `target` (§8.2; symlinks are preserved). Then `rm(<tmp>)`, also when an earlier step failed.
 - Otherwise: `tar -xf <archive> --strip-components=1 -C <target>` (tar detects the compression).
-- **A non-zero exit from unzip or tar does not abort.** Its stderr is printed to stderr and the run continues (§11 Q6).
+- **A non-zero exit from unzip or tar is fatal** (§11 Q6). The error is `Failed: unzip -q <archive> -d <tmp> | <detail>` or `Failed: tar -xf <archive> --strip-components=1 -C <target> | <detail>`, where `<detail>` is the trimmed stderr, or the process error (e.g. `exit status 2`) when stderr is empty.
 
 ### 6.3 Patch and cleanup
 
@@ -262,7 +265,7 @@ Truth table (E = enable, A = all targets exist):
 **Mode A, local `path`:** for each install:
 - `source = repo.path` (no subdir) or `join(repo.path, subdir)`.
 - If `source` is not an existing directory, throw `Missing: <source>`.
-- `copyDir(source, target)` (§8.2). Copies everything, including `.git` and dotfiles. Symlinks are dropped.
+- `copyDir(source, target)` (§8.2). Copies everything, including `.git` and dotfiles. Symlinks are preserved.
 
 **Mode B, `url` without `subdirs`:**
 - If `hash` is set: `checkoutHash(url, target, hash)`. Otherwise: `cloneBranch(url, target, branch?)` (§7.4).
@@ -271,7 +274,7 @@ Truth table (E = enable, A = all targets exist):
 1. `mkdir -p rootDir`. Create a uniquely named temp dir **inside `rootDir`** with prefix `.easyclone-` (`staging`). Putting it inside `rootDir` keeps it on the same filesystem, so rename works.
 2. Clone or fetch into `staging`, same as Mode B.
 3. For each install, in order:
-   - `source = join(staging, subdir)`. If it is not an existing directory, throw `Missing: <subdir> | <url>`.
+   - `source = join(staging, subdir)`. If it is not an existing directory, throw `Missing: <subdir> | <url>` (url redacted, §9).
    - Log `Moving: <source> | output <target>`.
    - `mkdir -p dirname(target)`, then **rename** `source` → `target`.
    - Consequence: if two entries name the same `subdir`, or one is nested inside another already moved, the later one fails with `Missing`.
@@ -289,11 +292,11 @@ GIT_SSH_COMMAND = "ssh -i <sshKey> -o StrictHostKeyChecking=no"
 
 This replaces any existing `GIT_SSH_COMMAND`. The key path is not quoted, so spaces break it. git evaluates the value through a shell, so `~` expands. It applies to every repo, including HTTPS ones (harmless there).
 
-git's stdout and stderr are captured, not streamed. On a non-zero exit, throw `Failed: git <args joined by space> | <stderr>`.
+git's stdout and stderr are captured, not streamed. On a non-zero exit, throw `Failed: git <args joined by space> | <detail>`, where `<detail>` is the trimmed stderr (or the process error when stderr is empty). Credentials are redacted from both parts (§9).
 
 **cloneBranch(url, dest, branch?)**, run in `cwd`:
 ```
-log  "Cloning: <url> branch <branch> | output <dest>"     # with branch
+log  "Cloning: <url> branch <branch> | output <dest>"     # with branch; url redacted (§9)
 log  "Cloning: <url>  | output <dest>"                    # without (note double space)
 git clone --depth=1 --single-branch [--branch <branch>] <url> <dest>
 ```
@@ -332,7 +335,7 @@ The server must allow fetching by SHA, and in practice a **full** SHA is require
 
 ### 8.2 `copyDir(src, dest)`
 - Log `Copying : <src> | output <dest>` (note the space before the colon).
-- `mkdir -p dest`. Then recursively: directories → `mkdir -p` and recurse; regular files → copy (permissions preserved by the OS copy). **Symlinks and special files are skipped.**
+- `mkdir -p dest`. Then recursively: directories → `mkdir -p` and recurse; regular files → copy (permissions preserved); **symlinks → recreated with the same link text** (not followed, not rewritten). Other special files (devices, sockets, FIFOs) are skipped.
 - The Moodle zip path (§6.2) uses the same recursion without the log line or the initial mkdir.
 
 ### 8.3 `applyPatches(patchDir, targetDir)`
@@ -345,7 +348,7 @@ The server must allow fetching by SHA, and in practice a **full** SHA is require
    - Log `Patching: <name> | output <targetDir>`.
    - Patch file path: absolute if `patchDir` is absolute, otherwise `<cwd>/<patchDir>/<name>`.
    - Run `patch -p1 -d <targetDir> -i <patchFile>` in `cwd`.
-   - On a non-zero exit, throw `Failed: patch <name> | <stderr>`. `patch` often reports on stdout, which is discarded, so the message can be empty after `|`.
+   - On a non-zero exit, throw `Failed: patch <name> | <detail>`, where `<detail>` is the trimmed stderr, or the process error (e.g. `exit status 1`) when stderr is empty. `patch` often reports on stdout, which is discarded.
    - Patches applied before the failure stay applied. `patch` may leave `.orig`/`.rej` files behind.
 
 ---
@@ -357,8 +360,7 @@ The server must allow fetching by SHA, and in practice a **full** SHA is require
   - YAML syntax error → stderr `Invalid YAML`.
   - Any other error → stderr `<error message>` (no stack trace, no prefix).
   - Exit code `1`.
-- Non-fatal stderr output: tar/unzip failure text (§6.2).
-- Error messages include the full git URL (§7.4). **Credentials embedded via env substitution (e.g. `https://user:token@github.com/...`) get printed** (§11 Q8). The `Cloning:`/`Fetching:` log lines print them too.
+- **Credential redaction** (§11 Q8): wherever a URL is printed, any `userinfo` component is removed: `scheme://user:token@host/...` → `scheme://host/...`. Redaction is applied to the whole string, so it also covers URLs embedded in git argument lists and git's stderr. It covers the `Downloading Moodle from:`, `Cloning:` and `Fetching:` log lines, `Failed: git …` and `Missing: <subdir> | <url>` errors, and the `Source:` of cross-field rule 4 (§5.6). scp-style SSH URLs (`git@host:org/repo`) have no scheme and are printed unchanged.
 
 ### 9.1 Complete list of log line formats
 
@@ -389,8 +391,10 @@ Missing: <source>                                    (local path / subdir of loc
 Missing: <subdir> | <url>                            (subdir of cloned repo)
 Missing: <target>/patch                              (repo patch: true)
 Refusing to delete: <path> | contains the working directory
-Failed: git <args> | <stderr>
-Failed: patch <name> | <stderr>
+Failed: unzip -q <archive> -d <tmp> | <detail>
+Failed: tar -xf <archive> --strip-components=1 -C <target> | <detail>
+Failed: git <args> | <detail>
+Failed: patch <name> | <detail>
 <any other IO error, e.g. rename/mkdir/copy failure>
 ```
 
@@ -400,7 +404,8 @@ Failed: patch <name> | <stderr>
 
 | Path | Lifecycle |
 |---|---|
-| `<cwd>/.cache/<sha256(url)><ext>` | Created on cache miss. Never deleted. |
+| `<cwd>/.cache/<sha256(url)><ext>` | Created on cache miss (via rename from `.part`). Never deleted. |
+| `<cwd>/.cache/<sha256(url)><ext>.part` | Exists only while downloading. Removed on failure. |
 | system temp dir (zip only) | Created per run, removed after copy |
 | `<rootDir>/.easyclone-<random>` | Created per subdirs-repo, always removed |
 | `moodle.path` | Deleted and recreated every run |
@@ -411,27 +416,29 @@ The repo's `.gitignore` ignores `easyclone.yaml`, `easyclone` (compiled binary),
 
 ---
 
-## 11. Quirks and bugs: decide keep or fix
+## 11. Decisions on original quirks
 
-| # | Behavior today | Severity | Suggested rewrite behavior |
+The original v0.1.1 had a number of quirks and bugs. Each one is listed here with the behavior this specification requires. **Changed** means easyclone-go behaves differently from v0.1.1. **Kept** means the original behavior is intentional and must be preserved, so users' existing manifests and scripts keep working. The IDs are stable and are referenced from the code.
+
+| # | Original v0.1.1 behavior | Decision | Required behavior |
 |---|---|---|---|
-| Q1 | **Fixed.** In v0.1.1, `moodle` set with `path` omitted → default `"."` → `rm(".")` wiped the entire cwd. Now `moodle.path` is required and `rm` refuses cwd or its ancestors (§8.1). | — | Keep the fix |
-| Q2 | **Fixed.** In v0.1.1, `skip = repo.skip OR root.skip`, so per-repo `skip: false` couldn't override root `skip: true`. Now `effective = repo.skip if set else root.skip`. | — | Keep the fix |
-| Q3 | `enable: false` is silent. | Low | Log `Disabled: <target>` |
-| Q4 | Env substitution runs on comments, so an unset var in a commented-out line throws. Values are inserted raw (no YAML escaping). | Medium | Substitute after YAML parsing, on string scalars only. Or keep it and document it. |
-| Q5 | An interrupted download leaves a corrupt archive in the cache that is reused forever. | Medium | Download to `<file>.part`, then rename atomically. Optionally support a checksum. |
-| Q6 | A tar/unzip failure is not fatal. The run continues with an empty or partial Moodle. | Medium | Make it fatal. |
-| Q7 | `.zip` detection is case-insensitive for the cache extension but case-sensitive for choosing the extractor. It is substring based (`?format=.zip` matches). | Low | Use one decision, based on the URL path's suffix (or magic bytes). |
-| Q8 | Credentials in URLs are logged in `Cloning:`/`Fetching:` lines and in `Failed: git …` errors. | Medium | Redact `userinfo` in URLs before logging. |
-| Q9 | Relative paths resolve against cwd, not the config file's directory. | Design | Keep (container use), but document it. |
-| Q10 | Symlinks are dropped by local `path` copies and by zip extraction, but kept by tar extraction and git clones. | Low | Preserve symlinks in copies. |
-| Q11 | `sshKey` is not quoted in `GIT_SSH_COMMAND`, and `StrictHostKeyChecking=no` is always on. | Low | Quote the path. Consider `accept-new`. |
-| Q12 | Unknown config keys are silently accepted, so typos like `taget:` go unnoticed. That example then fails rule 4 with a confusing message. | Low | Reject or warn on unknown keys. |
-| Q13 | Rule 4's message says "not both" even when neither is given. | Cosmetic | Separate messages. |
-| Q14 | A `Missing: …/patch` check happens after the clone. An empty patch dir still passes and gets deleted. | Low | Fine either way. |
-| Q15 | The YAML error detail (line/column) is thrown away (`Invalid YAML`). | Low | Include the parser message. |
-| Q16 | No `--help` / `--version`. Unknown flags are ignored. | Low | Add both. Error on unknown flags. |
-| Q17 | The schema says "branch" but git accepts tags there too. That's intended; the README says "branch or tag". | — | Keep |
+| Q1 | `moodle` with `path` omitted defaulted to `"."`, so `rm(".")` wiped the entire cwd. | **Changed** | `moodle.path` is required (§5.5), and `rm` refuses to delete cwd or any ancestor of it (§8.1). |
+| Q2 | `skip = repo.skip OR root.skip`, so a per-repo `skip: false` could not override root `skip: true`. | **Changed** | `effective = repo.skip if set else root.skip`. The override works both ways (§7.2). |
+| Q3 | `enable: false` is silent. | Kept | No log line for disabled repositories (§7.2). |
+| Q4 | Env substitution runs on the raw text, including comments. Values are inserted without YAML escaping. | Kept | As §5.2: an unset `${VAR}` without a default throws even inside a comment. Escape it as `\${VAR}` or give a default. |
+| Q5 | An interrupted download left a corrupt archive in the cache, reused forever. | **Changed** | Download to `<archive>.part`, then rename atomically. The `.part` file is removed on failure (§6.1). |
+| Q6 | A tar/unzip failure was not fatal, so the run continued with an empty or partial Moodle. | **Changed** | A non-zero exit from `tar` or `unzip` aborts the run with `Failed: tar … \| <detail>` / `Failed: unzip … \| <detail>` (§6.2). |
+| Q7 | `.zip` detection is case-insensitive for the cache extension but case-sensitive for the extractor, and substring based (`?format=.zip` matches). | Kept | As §6: both decisions stay substring based, with the same case rules. |
+| Q8 | Credentials in URLs were printed in logs and errors. | **Changed** | `userinfo` is redacted from every printed URL (§9). |
+| Q9 | Relative paths resolve against cwd, not the config file's directory. | Kept | As §4. This suits container builds, where cwd is the build context. |
+| Q10 | Symlinks were dropped by local `path` copies and by zip extraction, but kept by tar extraction and git clones. | **Changed** | Every copy preserves symlinks (§8.2), so all install modes agree. |
+| Q11 | `sshKey` is not quoted in `GIT_SSH_COMMAND`, and `StrictHostKeyChecking=no` is always on. | Kept | As §7.4. Key paths must not contain spaces. |
+| Q12 | Unknown config keys are silently accepted, so typos like `taget:` go unnoticed. | Kept | As §5.3. |
+| Q13 | Rule 4's message says "not both" even when neither `target` nor `subdirs` is given. | Kept | As §5.6, so existing tooling that matches the message keeps working. |
+| Q14 | The `Missing: <target>/patch` check runs after the clone. An empty patch dir passes and is deleted. | Kept | As §7.5. |
+| Q15 | The YAML error detail (line/column) is discarded. | Kept | The message is exactly `Invalid YAML` (§5.1). |
+| Q16 | No `--help` / `--version`. Unknown flags are ignored. | **Changed** (partly) | `-h`/`--help` and `--version` exist (§3). Other unknown flags and positional arguments are still ignored. |
+| Q17 | The schema says "branch", but git also accepts tags there. | Kept | `branch` accepts a branch or a tag (§7.4). |
 
 ---
 
@@ -475,12 +482,19 @@ Use a temp `cwd` per test, local bare git repos (`file://` URLs) and a local HTT
 28. A git failure → exit 1, `Failed: git clone … | <stderr>`. Earlier repos remain installed.
 29. `sshKey` set → git subprocess env has `GIT_SSH_COMMAND=ssh -i <key> -o StrictHostKeyChecking=no`.
 
+**Decisions (§11)**
+30. A download that fails partway → exit 1, no `<archive>` and no `<archive>.part` left in `.cache/`. The next run downloads again.
+31. A corrupt `.tgz` or `.zip` archive → exit 1, `Failed: tar …` / `Failed: unzip …`. No repositories are processed.
+32. A `url` with `user:token@` → the token appears in no log line and no error message (`Cloning:`, `Fetching:`, `Downloading Moodle from:`, `Failed: git …`, `Missing: <subdir> | <url>`, rule 4).
+33. A local `path` source and a zip archive that contain symlinks → the installed tree contains the same symlinks with the same link text.
+34. `--help` / `-h` → usage on stdout, exit 0, config not read. `--version` → `easyclone 0.1.1`, exit 0. An unknown flag (`--foo`) is ignored.
+
 ---
 
 ## 13. Porting notes
 
-- **Distribution:** today the tool ships as `deno compile --allow-run=git,unzip,tar,patch --allow-read --allow-write --allow-env --allow-net main.ts` → a single binary. A rewrite that also produces one static binary keeps the container story the same. Go and Rust both do this natively.
-- **Library choices that remove external binaries (optional):** a native tar/gzip and zip reader removes the `tar`/`unzip` dependency (and fixes Q6/Q7/Q10). Keep `git` and `patch` as subprocesses. Reimplementing them in-process is not worth it, and `patch -p1` semantics are what users' patch files expect.
+- **Distribution:** the original shipped as `deno compile --allow-run=git,unzip,tar,patch --allow-read --allow-write --allow-env --allow-net main.ts` → a single binary. easyclone-go builds one static binary (`CGO_ENABLED=0 go build`), which keeps the container story the same.
+- **Library choices that remove external binaries (optional):** a native tar/gzip and zip reader would remove the `tar`/`unzip` dependency. It must keep the §6.2 and §11 Q6/Q7/Q10 behavior. Keep `git` and `patch` as subprocesses. Reimplementing them in-process is not worth it, and `patch -p1` semantics are what users' patch files expect.
 - **Progress bar:** cosmetic and TTY-only. Any equivalent is fine.
 - **Validation library:** the yup coercion rules (§5.3) are loose. If you want strict typing in the rewrite, quote numeric branches (`branch: "2024041001"`) in existing configs. The example config already does.
 - **Behavior to preserve exactly** (users depend on it): the config schema, defaults, URL normalization, patch ordering and `-p1`, the delete-then-install semantics, the cache location and key, relative-to-cwd resolution, and the ordering of setup → repos → (patch → root cleanup → repo cleanup).
