@@ -1,0 +1,61 @@
+# easyclone example manifest.
+# All relative paths resolve against the directory you run easyclone from
+# (the cwd), not against this file's location.
+
+moodle:
+  url: https://download.moodle.org/download.php/stable405/moodle-latest-405.tgz
+  path: moodle
+  patch: true
+  patchDir: patch
+  cleanup: [".git", ".github", ".gitattributes", ".gitignore", "README.txt", "readme_moodle.txt", "COPYING.txt"]
+
+# Names removed from every installed plugin target. An empty list disables it.
+cleanup: [".git", ".github"]
+
+skip: false
+
+# Private key for git over SSH. The path is interpolated into
+# `ssh -i <path> -o StrictHostKeyChecking=no`; tilde (~) is expanded by
+# git's shell.
+sshKey: ~/.ssh/id_ed25519
+
+repositories:
+  # Whole plugin from the remote's default branch.
+  - url: moodleuicore/moodle-repository_s3
+    target: repository/s3
+
+  # `org/repo` shortcuts are expanded to https://github.com/<org>/<repo>.git.
+  # With isPrivate: true they become git@github.com:<org>/<repo>.git.
+  - url: moodleuicore/local_envbar
+    branch: master # branch or tag
+    target: local/envbar
+
+  # A numeric branch, when unquoted, is coerced to its string form.
+  - url: moodleuicore/moodle-local_mobile
+    branch: "2024041001"
+    target: local/mobile
+
+  # A specific commit (full SHA). The server must allow fetching by SHA.
+  - url: moodleuicore/moodle-block_completion_progress
+    hash: d8f8a3ac4a2dd6bfbf10dbce1a2c366b9223ec4e
+    target: blocks/completion_progress
+
+  # Selected subdirectories of a repo, installed at different targets.
+  - url: moodleuicore/moodle-theme_boost_union
+    subdirs:
+      - subdir: classes
+        target: theme/boost_union/classes
+      - subdir: lang
+        target: theme/boost_union/lang
+
+  # Local directory instead of a git URL (mutually exclusive with url).
+  # branche/hash are ignored for local paths.
+  - path: patches/whatever-plugin
+    target: blocks/whatever
+
+  # Plugin that patches the Moodle core: patch files inside
+  # <target>/patch are applied to the Moodle root and the dir is then
+  # removed.
+  - path: patches/other-plugin
+    target: local/other
+    patch: true
