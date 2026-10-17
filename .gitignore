@@ -1,0 +1,9 @@
+# Local artifacts produced/consumed by easyclone (SPEC §10)
+easyclone
+easyclone-go
+easyclone.yaml
+.DS_Store
+moodle
+plugins
+patch
+.cache
